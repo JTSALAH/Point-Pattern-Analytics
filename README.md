@@ -1,4 +1,4 @@
-
+Point pattern analysis is a statistical technique used to analyze the patterns formed by points in a space, particularly clustering versus dispersion of observations. We can utilize the spatstat package in order to go through various functions which quantify clustering and dispersion throughout our dataset. This script outlines how you would conduct a spatial point pattern analysis!
 
 # 0. Load in Packages
 ```r
