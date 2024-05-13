@@ -1,0 +1,386 @@
+---
+title: "Cactus Point Pattern Analytics"
+author: "James Tsalah"
+output: html_document
+---
+
+# Preamble
+## Defining a Point Pattern Analysis
+
+Point pattern analysis is a set of statistical techniques used to study the spatial arrangement of points within a given area. These points can represent various phenomena such as locations of trees, disease occurrences, or in our case cactus's. The analysis aims to determine whether the observed pattern is random, clustered, or regularly spaced by comparing it to a theoretical model of complete spatial randomness (CSR). Techniques like Ripley's K function, L function, pair correlation function, G function, and F function are commonly used to quantify and interpret the spatial relationships and distances between points, providing insights into the underlying processes driving the observed patterns.
+
+## Two Approaches
+
+### The Density Approach
+
+The density approach is good at determining explicit local patterns at various scales, as opposed to the nearest neighbor approach which looks at the generalized average tendency.
+
+- K & L detect clustering or dispersion at various scales in a generalized area.
+- g looks at specific range bands to determine clustering or dispersion.
+
+### The Nearest Neighbor Approach
+
+The Nearest Neighbor approach is good at describing generalized average tendencies of patterns, as opposed to the density approach which focuses on patterns at various scales.
+
+- This approach considers only one neighbor for each point!
+- The G Function focuses on the nearest neighbor for ALL points, one neighbor per point.
+- The F Function, or the empty space function, focuses on the nearest neighbor for a set amount of random locations in space, with one neighbor per random point.
+
+```{r include=FALSE, echo=FALSE, results='hide', message=FALSE, warning=FALSE}
+# Load in Packages
+require(spatstat)
+require(spatstat.data)
+require(spdep)
+require(sf)
+require(here)
+```
+
+# 1. Prepare Data
+
+```{r}
+# 1: Load in Data
+pts <- read.csv(here("data", 
+                     "Fletcher_Fortin-2018-Supporting_Files",
+                     "data",
+                     "cactus.csv"))
+boundary <- read.csv(here("data", 
+                     "Fletcher_Fortin-2018-Supporting_Files",
+                     "data","cactus_boundaries.csv"), header=T)
+
+# 2: Create a spatstat object  with our pts data
+ppp.window <- owin(xrange=c(boundary$Xmin, boundary$Xmax),
+                   yrange=c(boundary$Ymin, boundary$Ymax))
+ppp <- ppp(pts$East, pts$North, window=ppp.window)
+```
+
+```{r}
+# 3. Plot raw data and density
+par(mfrow = c(1,2), oma=c(0,0,0,1))
+plot(ppp, main = "Points")
+plot(density(ppp,1), main = "Density")
+```
+
+```{r}
+# 4. Inspect the Point Pattern Summary
+summary(ppp)
+```
+
+# 2. Utilize Point Pattern Functions
+
+```{r}
+# Create plotting template
+ppp_plot = function(fun_name, none, iso, trans) {
+  par(mfrow = c(1,4))
+  plot(none, main = paste(fun_name, "none"),legend=F)         
+  plot(none, . - r~r, main = paste(fun_name, "none"), legend=F)  
+  plot(iso, . - r~r, main = paste(fun_name, "iso"), legend=F)
+  plot(trans, . - r~r, main = paste(fun_name, "trans"), legend=F)
+}
+```
+
+## 1. Ripleys K Function
+
+**Purpose**: Measures the degree of clustering or dispersion of points at various scales.
+
+### Interpreting K-Plots
+
+- \( K(r) \) is the expected number of points within a distance \( t \) of a randomly chosen point, divided by the overall point density.
+- \( K(r) > r \): Indicates clustering.
+- \( K(r) < r \): Indicates dispersion.
+- \( K(r) - r > r \): Indicates clustering.
+- \( K(r) - r < r \): Indicates dispersion.
+- **Formula**: \( K(r) = \frac{1}{\lambda} \sum_{i=1}^n \sum_{j \neq i} I(d_{ij} \leq r) \) where \( \lambda \) is the density and \( d_{ij} \) is the distance between points \( i \) and \( j \).
+
+
+```{r}
+# 1: All lines
+Kall <- Kest(ppp)
+
+# 5.1: 1:1 expectation (no correction)
+Knone <- Kest(ppp, correction="none")
+
+# 5.2: Isotropic edge correction
+Kiso <- Kest(ppp, correction="isotropic")
+
+# 5.3: Translate (toroidal) edge correction
+Ktrans <- Kest(ppp, correction="trans")
+
+# 5.4: Plot!
+ppp_plot("K", Knone, Kiso, Ktrans)
+```
+The K curve is above the dashed curve of CSR, indicating that points are clustered at a local scale! The K curves do not change drastically with corrections, which on it's own describes little to no edge effects. 
+
+- Note that just because there are no edge effects detected in the K curve, this does not mean edge effects will not be described in other point pattern functions.
+
+
+## 2. L Function
+
+**Purpose**: A transformation of Ripley's K function to stabilize the variance. This modification focuses more explicitly on deviations from CSR, and emphasizes the specific scales at which clustering or dispersion occurs.
+
+
+### Interpretation
+
+- \( L(r) = \sqrt{\frac{K(t)}{\pi}} \).
+- \( L(r) > r \): Indicates clustering.
+- \( L(r) < r \): Indicates dispersion.
+- \( L(r) - r > 0 \): Indicates clustering.
+- \( L(r) - r < 0 \): Indicates dispersion.
+- **Formula**: \( L(r) = \sqrt{\frac{K(r)}{\pi}} \).
+
+```{r}
+# 1: 1:1 expectation (no correction)
+Lnone <- Lest(ppp, correction="none")
+
+# 2: Isotropic edge correction
+Liso <- Lest(ppp, correction="isotropic")
+
+# 3: Translate (toroidal) edge correction
+Ltrans <- Lest(ppp, correction="trans")
+
+# 4: Plot!
+ppp_plot("L", Lnone, Liso, Ltrans)
+```
+
+After the adjustment of K, the L function graphs change. The dashed curve of CSR has become a flat line at zero, where positive L values indicate clustering and negative L values indicate dispersion. These plots describe that the cactus's are clustered in space! Additionally the L curves change significantly with corrections, indicating a degree of edge effects in our dataset.
+
+## 3. Pair Correlation Function (g)
+
+**Purpose**: Describes the probability of finding a pair of points at a specific distance apart, relative to a homogeneous Poisson process.
+
+### Interpretation
+
+- \( g(r) \) is the ratio of the observed density of pairs at distance \( r \) to the expected density under complete spatial randomness (CSR).
+- \( g(r) > 1 \): Indicates clustering.
+- \( g(r) < 1 \): Indicates dispersion.
+- **Formula**: \( g(t) = \frac{1}{2\pi t \lambda^2} \frac{d K(r)}{d r} \).
+
+
+```{r}
+# 1: 1:1 expectation (no correction)
+Pnone <- pcf(ppp, correction="none")
+
+# 2: Isotropic edge correction
+Piso <- pcf(ppp, correction="isotropic")
+
+# 3: Translate (toroidal) edge correction
+Ptrans <- pcf(ppp, correction="trans")
+
+# 4: Plot!
+par(mfrow = c(1,3))
+plot(Pnone, main = "Pnone",legend=F, ylim=c(0,3))         
+plot(Piso, main = "Piso", legend=F, ylim=c(0,3))
+plot(Ptrans, main = "Ptrans", legend=F, ylim=c(0,3))
+```
+
+The g function determines the amount of clustering within a band at radius r, meaning we are measuring the intensity of points at various distances to reveal fine-scale spatial structure. The benefit of this is that it facilitates the distinction between random distribution, clustering, and regular spacing without the need for scaling like K and L.
+
+These graphs indicate that points are clustered at close distances, but at around a 7 meter radius points become close to spatially random. The iso and trans corrections, like the L function, indicate the presence of edge effects!
+
+
+## 4. Basic G function
+
+**Purpose**: Measures the distribution of the distances from a randomly chosen point to its nearest neighbor.
+
+### Interpretation
+
+- \( G(t) \) is the cumulative distribution function of the nearest-neighbor distances.
+- \( G(t) > G_{CSR}(t) \): Indicates clustering.
+- \( G(t) < G_{CSR}(t) \): Indicates dispersion.
+- **Formula**: Empirically calculated as the proportion of points with nearest-neighbor distance less than or equal to \( r \).
+
+Note: G & F don't have an isometric or trans correction, but they have similar corrections.
+
+```{r}
+# 1: 1:1 expectation (no correction)
+Gnone <- Gest(ppp, correction="none")
+
+# 2: Reduced sample or border correction
+Grs <- Gest(ppp, correction="rs")
+
+# 3: Best (determines best correction for dataset)
+Gbest = Gest(ppp, correction="best")
+
+# 4: Plot!
+par(mfrow = c(1,3))
+plot(Gnone, main = "Gnone",legend=F)         
+plot(Grs, main = "Grs", legend=F)
+plot(Gbest, main = "Gbest", legend=F)
+```
+
+The G curve is useful for analyzing the "closeness" of points, and providing insight into the clustering of points at the smallest scales. This is particularly helpful in determining how dense clusters are or how isolated points are within a pattern.
+This works by measuring the cumulative probability that a randomly selected point has its nearest neighbor within distance r. 
+
+These G curves indicate clustering at most scales, and consistent with the L and g functions there appears to be edge effects. This is due to the deviation in curve shape in the corrected functions.
+
+
+## 5. Basic F function
+
+**Purpose**: Measures the distribution of the distances from a randomly chosen location in the study area to the nearest point.
+
+### Interpretation
+
+- \( F(r) \) is the cumulative distribution function of the distances from random locations to the nearest point.
+- \( F(r) < F_{CSR}(r) \): Indicates clustering.
+- \( F(r) > F_{CSR}(r) \): Indicates dispersion.
+- **Formula**: Empirically calculated as the proportion of random locations with distance to the nearest point less than or equal to \( r \).
+
+
+```{r}
+# 1: 1:1 expectation (no correction)
+Fnone <- Fest(ppp, correction="none")
+
+# 2: Reduced sample or border correction
+Frs <- Fest(ppp, correction="rs")
+
+# 3: Best (determines best correction for dataset)
+Fbest = Fest(ppp, correction="best")
+
+# 4: Plot!
+par(mfrow = c(1,3))
+plot(Fnone, main = "Fnone",legend=F)         
+plot(Frs, main = "Frs", legend=F)
+plot(Fbest, main = "Fbest", legend=F)
+```
+
+The F Function describes the spatial arrangement and clustering of points from the perspective of the space between points. The approach essentially determines distance from arbitrary locations to the nearest point, and is useful for understanding how "empty" or "filled" a space is. This is the flip side of the G function!
+
+The F curve is consistently below the dashed curve of CSR, indicating clustering. The corrected F curves only slightly deviate from the uncorrected curve, but we know from our previous analytics that there are likely edge effects which gives us confidence that it is visualized here as well.
+
+## Spatial Conclusions
+
+Based on the point pattern functions we plotted, we can safely assume that the cactus's are clustered in space! This is due to the summarized point pattern results described below:
+
+- The K curve is above the dashed curve of CSR, indicating that points are clustered.
+- The L curve is positive, indicating that points are clustered.
+- The g curve is above 1.0, indicating that the points are clustered.
+- The G curve is above the dashed curve of CSR, indicating that points are clustered.
+- The F curve is below the dashed curve of CSR, indicating clustering.
+
+# Point Pattern Process Envelopes
+
+## 1. L Function Envelopes
+
+Let's create a Lest simulated envelope of global and pointwise confidence under CSR!
+
+```{r}
+# 1: Create a global & pointwise (non-global) Envelope
+Lcsr   <- envelope(ppp, Lest, nsim=99, rank=1, correction="trans", global=F)
+Lcsr.g <- envelope(ppp, Lest, nsim=99, rank=1, correction="trans", global=T)
+```
+
+### Pointwise Envelope Interpretation
+
+This envelope is constructed by comparing the observed L function against the L functions from 99 simulated datasets under complete spatial randomness (CSR). The envelope is not global, meaning the comparison is made at each distance r individually, without considering the overall pattern across all distances.
+
+- Inside the Envelope: If the observed L function lies within the pointwise envelope at a specific distance r, it suggests that the spatial pattern at that distance is consistent with CSR.
+- Outside the Envelope: If the observed L function falls outside the envelope at a specific distance r, it indicates significant deviation from CSR at that distance, suggesting clustering or dispersion.
+
+```{r}
+# 2: Plot point-wise envelope
+plot(Lcsr, . - r~r, shade=c("hi", "lo"), legend=F)
+```
+
+### Global Envelope Interpretation
+
+This envelope is constructed by comparing the observed L function against the L functions from 99 simulated datasets under CSR, but it considers the overall pattern across all distances. This global envelope provides a more stringent test for CSR, taking into account the entire range of distances simultaneously.
+
+- Inside the Envelope: If the observed L function lies within the global envelope across all distances r, it indicates that the overall spatial pattern is consistent with CSR.
+- Outside the Envelope: If the observed L function falls outside the global envelope at any distance r, it suggests significant deviation from CSR in the overall pattern, indicating clustering or dispersion over a range of distances.
+
+```{r}
+# 3: Plot global envelope
+plot(Lcsr.g, . - r~r, shade=c("hi", "lo"), legend=F)
+```
+
+## 2. Pair Correlation Function (g) Envelopes
+
+Create a pcf simulated envelope of pointwise confidence under CSR, and inspect non-envelope pcf.
+
+```{r}
+# 1: Create a pair correlation function, g, with trans correction
+Ptrans <- pcf(ppp, correction="trans")
+
+# 2: Create a fine envelope
+Penv <- envelope(ppp,pcf, nsim=99, rank=1, stoyan=0.15, correction="trans", global=F) # stoyan = bandwidth; set to default
+
+# 3: Create a coarse envelope
+Penv.coarse <- envelope(ppp, pcf, nsim=99, rank=1, stoyan=0.3, correction="trans", global=F)
+
+# 4: Plot no-envelope Ptrans
+plot(Ptrans, legend=FALSE, ylim = c(0,3))
+```
+
+### Fine Envelope Interpretation
+
+This envelope is created by simulating 99 datasets under CSR and computing the PCF for each. The stoyan parameter, which controls the bandwidth of the kernel used in the PCF estimation, is set to 0.15, resulting in a "fine" envelope.
+Interpretation:
+
+- Inside the Envelope: If the observed PCF lies within the fine envelope at a specific distance r, it suggests that the spatial pattern at that distance is consistent with CSR.
+- Outside the Envelope: If the observed PCF falls outside the envelope at a specific distance r, it indicates significant deviation from CSR at that distance, suggesting clustering or dispersion.
+
+```{r}
+# 5: Plot our fine envelope
+plot(Penv, shade=c("hi", "lo"), legend=FALSE, ylim = c(0,3))
+```
+
+### Coarse Envelope Interpretation
+
+This envelope is created similarly to the fine envelope but with a stoyan parameter of 0.3, resulting in a "coarse" envelope.
+Interpretation:
+
+- Inside the Envelope: If the observed PCF lies within the coarse envelope at a specific distance r, it suggests that the spatial pattern at that distance is consistent with CSR.
+- Outside the Envelope: If the observed PCF falls outside the envelope at a specific distance r, it indicates significant deviation from CSR at that distance, suggesting clustering or dispersion.
+- The coarser envelope provides a broader, less detailed comparison, which can be useful for identifying general trends but may overlook finer-scale patterns.
+
+```{r}
+# 6: Plot our coarse envelope
+plot(Penv.coarse, shade=c("hi", "lo"), legend=F, ylim = c(0,3))
+```
+
+## Basic G Function Envelopes
+
+Create a Gest simulated envelope of pointwise confidence under CSR, and inspect non-envelope G Function.
+
+```{r}
+# 1: Create a G estimation with trans correction
+Gtrans <- Gest(ppp, correction="rs")
+
+# 2: Create a pointwise Gest envelope
+Genv <- envelope(ppp, Gest, nsim=99, rank=1, correction="rs", global=F)
+
+# 3: Create a nearest neighbor distance variable for our plot
+nn.dist <- nndist(ppp)
+max(nn.dist)
+
+# 4: Plot our trans G
+plot(Gtrans, legend=F)
+```
+
+### Envelope & Nearest Neighbor Interpretation
+
+This envelope is created by simulating 99 datasets under CSR and computing the G function for each. The envelope is not global, meaning the comparison is made at each distance r individually, without considering the overall pattern across all distances.
+Interpretation:
+
+- Inside the Envelope: If the observed G function lies within the pointwise envelope at a specific distance r, it suggests that the spatial pattern at that distance is consistent with CSR.
+- Outside the Envelope: If the observed G function falls outside the envelope at a specific distance r, it indicates significant deviation from CSR at that distance, suggesting clustering (G observed > G CSR) or dispersion (G observed < G CSR).
+
+```{r}
+# 5: Plot G with our pointwise envelope & nearest neighbor distances
+plot(Genv, shade=c("hi", "lo"), legend=F)
+plot(ecdf(nn.dist), add=T)
+```
+
+# Mark-Correlation Analysis
+
+```{r}
+# 1. Load in Spruces Dataset 
+data(spruces)
+
+# 2: Create an envelope for spruces
+MCFenv <- envelope(spruces, markcorr, nsim=99, correction="iso", global=F)
+
+# 3: Plot envelope
+plot(MCFenv,  shade=c("hi", "lo"), legend=F)
+```
+
+
